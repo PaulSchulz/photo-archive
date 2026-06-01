@@ -1,0 +1,32 @@
+* photo-archive :TOC:
+  - [[#overview][Overview]]
+  - [[#to-run-the-application][To run the Application]]
+  - [[#development-and-design][Development and Design]]
+  - [[#license][License]]
+
+** Overview
+A software package for off-line photo and image metadata collabouration
+
+Status: This is work in progress(WIP), and is not complete any sense.
+
+*** Aim
+Create a self-hosted application that can be used to add, edit and update photos
+and images in an archive for historical records.
+
+** To run the Application
+
+Open [[file:resources/public/index.html][resources/public/index.html]] in a web browser.
+
+** Development and Design
+photo-archive written in ClojureScript which should run is most web browsers. 
+
+See [[file:DEVELOPMENT.org][DEVELOPMENT.org]] for more information.
+
+** License
+Copyright © 2026 Paul Schulz
+
+Distributed under the Eclipse Public License either version 1.0 or (at your
+option) any later version.
+
+This may change in the future.
+
