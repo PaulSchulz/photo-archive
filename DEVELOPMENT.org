@@ -23,3 +23,47 @@ To create a production build run:
 
 And open your browser in `resources/public/index.html`. You will not
 get live reloading, nor a REPL.
+
+** Feature request
+
+- dark mode
+-
+
+** Database/Image Archive
+
+images/
+  dir1/
+    photo1.jpg
+    photo2.jpg
+  dir2/
+    photo2.jpg
+  metadata/
+    photos.yaml
+    albums.yaml
+    people.yaml
+  
+#+begin_src yaml
+  photos:
+    photo-001:
+      path: data/holiday/img1.jpg
+      title: Beach
+      description: Sunset at the beach
+      tags:
+        - sunset
+        - beach
+      people:
+        - paul
+        - jane
+
+      date: 2025-01-01
+      location: Sydney
+
+  albums:
+    favourites:
+      title: Favourites
+      photos:
+        - photo-001
+
+  people:
+        
+#+end_src
