@@ -1,4 +1,5 @@
-* Development of photo-archive
+* Development notes for photo-archive
+** Introduction
 
 To get an interactive development environment from the working directory run:
 
@@ -23,3 +24,13 @@ To create a production build run:
 
 And open your browser in `resources/public/index.html`. You will not
 get live reloading, nor a REPL.
+
+* Development
+** Using Co-pilot in GitHub
+
+Get copilot to develop in a branch, and then pull the changes with:
+
+  git fetch origin feature/gallery-and-viewer
+  git checkout feature/gallery-and-viewer
+
+where feature/gallery-and-viewer is the feature branch that has been created.
