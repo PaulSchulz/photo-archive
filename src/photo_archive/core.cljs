@@ -2,8 +2,6 @@
     (:require
               [reagent.core :as reagent :refer [atom]]
               [reagent.dom :as rd]
-              [cljs.core.async :refer [go chan put! <! >!]]
-              [cljs.core.async.interop :refer-macros [<p!]]
               [photo-archive.filesystem :as fs]
               [photo-archive.manifest :as manifest]
               [photo-archive.components.gallery :refer [gallery]]
@@ -20,32 +18,38 @@
 
 ;; Initialize directory and load photos
 (defn load-photos-from-directory []
-  (go
-    (try
-      (swap! app-state assoc :loading true :error nil)
-      
-      ;; Request directory access
-      (let [dir-handle (<p! (fs/request-directory-handle))]
-        (swap! app-state assoc :dir-handle dir-handle)
-        
-        ;; Scan for images
-        (let [images (<p! (fs/scan-images dir-handle))]
-          (if (empty? images)
-            (swap! app-state assoc :error "No images found in selected directory")
-            (do
-              ;; Create map of filename -> file handle
-              (let [file-handles (into {} (map (fn [img] [(:name img) (:handle img)]) images))
-                    ;; Load or create manifest
-                    manifest-data (<p! (manifest/load-or-create-manifest dir-handle images))]
-                
-                ;; Load photo data URLs
-                (let [photos-with-urls (<p! (manifest/load-photos-with-data-urls manifest-data file-handles))]
-                  (swap! app-state assoc :photos photos-with-urls
-                                        :loading false)))))))
-      
-      (catch :default e
-        (js/console.error "Error loading photos:" e)
-        (swap! app-state assoc :error (str "Error: " (.-message e)) :loading false)))))
+  (swap! app-state assoc :loading true :error nil)
+  
+  (-> (fs/request-directory-handle)
+      (.then (fn [dir-handle]
+               (swap! app-state assoc :dir-handle dir-handle)
+               
+               ;; Scan for images
+               (-> (fs/scan-images dir-handle)
+                   (.then (fn [images]
+                            (if (empty? images)
+                              (swap! app-state assoc :error "No images found in selected directory" :loading false)
+                              (do
+                                ;; Create map of filename -> file handle
+                                (let [file-handles (into {} (map (fn [img] [(.-name img) (.-handle img)]) images))]
+                                  
+                                  ;; Load or create manifest
+                                  (-> (manifest/load-or-create-manifest dir-handle images)
+                                      (.then (fn [manifest-data]
+                                               ;; Load photo data URLs
+                                               (-> (manifest/load-photos-with-data-urls manifest-data file-handles)
+                                                   (.then (fn [photos-with-urls]
+                                                            ;; Save manifest
+                                                            (-> (manifest/save-manifest dir-handle manifest-data)
+                                                                (.then (fn []
+                                                                         (swap! app-state assoc :photos (vec photos-with-urls)
+                                                                                              :loading false))))))))))))))))
+                   (.catch (fn [e]
+                            (js/console.error "Error scanning images:" e)
+                            (swap! app-state assoc :error "Error scanning folder" :loading false))))))
+      (.catch (fn [e]
+               (js/console.error "Error accessing folder:" e)
+               (swap! app-state assoc :error "Permission denied or operation cancelled" :loading false)))))
 
 (defn get-photo-by-id [photos id]
   (first (filter #(= (:id %) id) photos)))
