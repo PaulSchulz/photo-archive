@@ -5,6 +5,7 @@
 
 (defn request-directory-handle []
   "Request user permission to access a directory"
+  (js/console.log "Opening directory picker")
   (if file-system-available?
     (js/showDirectoryPicker)
     (js/Promise.reject "File System Access API not available")))
@@ -69,26 +70,29 @@
    (fn [resolve reject]
      (try
        (let [images (js/Array.)
-             process-entries (fn process-entries [iterator]
-                               (-> iterator
-                                   (.next)
-                                   (.then (fn [result]
-                                            (if (.-done result)
-                                              (resolve images)
-                                              (let [[name file-handle] (.-value result)]
-                                                (-> file-handle
-                                                    (.getFile)
-                                                    (.then (fn [file]
-                                                             (let [type (.-type file)]
-                                                               (when (.startsWith type "image/")
-                                                                 (.push images #js{:name name
-                                                                                   :handle file-handle
-                                                                                   :size (.-size file)
-                                                                                   :type type
-                                                                                   :lastModified (.-lastModified file)}))
-                                                               (process-entries iterator))))
-                                                    (.catch reject)))))
-                                          (.catch reject))))]
+             process-entries
+             (fn process-entries [iterator]
+               (-> iterator
+                   (.next)
+                   (.then
+                    (fn [result]
+                      (if (.-done result)
+                        (resolve images)
+                        (let [[name file-handle] (.-value result)]
+                          (-> file-handle
+                              (.getFile)
+                              (.then
+                               (fn [file]
+                                 (let [type (.-type file)]
+                                   (when (.startsWith type "image/")
+                                     (.push images #js{:name name
+                                                       :handle file-handle
+                                                       :size (.-size file)
+                                                       :type type
+                                                       :lastModified (.-lastModified file)}))
+                                   (process-entries iterator))))
+                              (.catch reject)))))
+                    (.catch reject))))]
          (process-entries (.entries dir-handle)))
        (catch js/Error e
          (reject e))))))

@@ -1,6 +1,6 @@
 (defproject photo-archive "0.1.0-SNAPSHOT"
-  :description "FIXME: write this!"
-  :url "http://example.com/FIXME"
+  :description "Tool for managing and sharing photographic archives"
+  :url "https://github.com/PaulSchulz/photo-archive.git"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
 

@@ -35,3 +35,16 @@ Get copilot to develop in a branch, and then pull the changes with:
 
 where feature/gallery-and-viewer is the feature branch that has been created.
 
+** File System Access API
+
+This application is a local browser based application, which uses an interface
+(API) to access the local computer storage directly. 
+
+The API only works in Chromium-based browsers. eg.
+
+- Chrome
+- Edge
+- Brave
+- Vivaldi
+
+It generally does not work in Firefox or Safari.
