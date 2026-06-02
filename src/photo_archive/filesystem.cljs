@@ -1,6 +1,4 @@
-(ns photo-archive.filesystem
-  (:require [cljs.core.async :refer [go chan put! <! >!]]
-            [cljs.core.async.interop :refer-macros [<p!]]))
+(ns photo-archive.filesystem)
 
 ;; File System Access API wrapper
 (def file-system-available? (some? (.-storage js/navigator)))
@@ -15,76 +13,82 @@
   "Get a file handle from a directory"
   (.getFileHandle dir-handle filename))
 
-(defn list-directory [dir-handle]
-  "List all files in a directory"
-  (go
-    (try
-      (let [entries (js/Array.)]
-        (js/for (entry (js/await (.entries dir-handle)))
-          (.push entries entry))
-        entries)
-      (catch :default e
-        (js/console.error "Error listing directory:" e)
-        nil))))
-
 (defn read-file [file-handle]
-  "Read file contents"
-  (go
-    (try
-      (let [file (<p! (.getFile file-handle))
-            text (<p! (.text file))]
-        text)
-      (catch :default e
-        (js/console.error "Error reading file:" e)
-        nil))))
+  "Read file contents as text"
+  (let [promise (js/Promise.
+                  (fn [resolve reject]
+                    (-> file-handle
+                        (.getFile)
+                        (.then (fn [file]
+                                 (-> file
+                                     (.text)
+                                     (.then resolve)
+                                     (.catch reject))))
+                        (.catch reject))))]
+    promise))
 
 (defn read-file-as-data-url [file-handle]
   "Read file as data URL for images"
-  (go
-    (try
-      (let [file (<p! (.getFile file-handle))
-            reader (js/FileReader.)]
-        (js/Promise.
-          (fn [resolve reject]
-            (set! (.-onload reader)
-              (fn [] (resolve (.-result reader))))
-            (set! (.-onerror reader)
-              (fn [] (reject (.-error reader))))
-            (.readAsDataURL reader file)))
-        )
-      (catch :default e
-        (js/console.error "Error reading file as data URL:" e)
-        nil))))
+  (js/Promise.
+    (fn [resolve reject]
+      (-> file-handle
+          (.getFile)
+          (.then (fn [file]
+                   (let [reader (js/FileReader.)]
+                     (set! (.-onload reader)
+                       (fn [] (resolve (.-result reader))))
+                     (set! (.-onerror reader)
+                       (fn [] (reject (.-error reader))))
+                     (.readAsDataURL reader file))))
+          (.catch reject)))))
 
 (defn write-file [dir-handle filename content]
   "Write content to a file"
-  (go
-    (try
-      (let [file-handle (<p! (.getFileHandle dir-handle filename #js{:create true}))
-            writable (<p! (.createWritable file-handle))]
-        (<p! (.write writable content))
-        (<p! (.close writable))
-        true)
-      (catch :default e
-        (js/console.error "Error writing file:" e)
-        false))))
+  (js/Promise.
+    (fn [resolve reject]
+      (-> dir-handle
+          (.getFileHandle filename #js{:create true})
+          (.then (fn [file-handle]
+                   (-> file-handle
+                       (.createWritable)
+                       (.then (fn [writable]
+                                (-> writable
+                                    (.write content)
+                                    (.then (fn []
+                                             (-> writable
+                                                 (.close)
+                                                 (.then (fn [] (resolve true)))
+                                                 (.catch reject))))
+                                    (.catch reject))))
+                       (.catch reject))))
+          (.catch reject)))))
 
 (defn scan-images [dir-handle]
   "Scan directory for image files"
-  (go
-    (try
-      (let [images (js/Array.)]
-        (js/for-await [entry (js/await (.entries dir-handle))]
-          (let [[name file-handle] entry
-                file (<p! (.getFile file-handle))
-                type (.-type file)]
-            (when (.startsWith type "image/")
-              (.push images #js{:name name
-                               :handle file-handle
-                               :size (.-size file)
-                               :type type
-                               :lastModified (.-lastModified file)}))))
-        images)
-      (catch :default e
-        (js/console.error "Error scanning images:" e)
-        nil))))
+  (js/Promise.
+    (fn [resolve reject]
+      (try
+        (let [images (js/Array.)
+              process-entries (fn process-entries [iterator]
+                                (-> iterator
+                                    (.next)
+                                    (.then (fn [result]
+                                             (if (.-done result)
+                                               (resolve images)
+                                               (let [[name file-handle] (.-value result)]
+                                                 (-> file-handle
+                                                     (.getFile)
+                                                     (.then (fn [file]
+                                                              (let [type (.-type file)]
+                                                                (when (.startsWith type "image/")
+                                                                  (.push images #js{:name name
+                                                                                    :handle file-handle
+                                                                                    :size (.-size file)
+                                                                                    :type type
+                                                                                    :lastModified (.-lastModified file)}))
+                                                                (process-entries iterator))))
+                                                     (.catch reject)))))
+                                    (.catch reject)))]
+          (process-entries (.entries dir-handle)))
+        (catch e
+          (reject e))))))
