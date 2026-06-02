@@ -1,10 +1,6 @@
-(ns photo-archive.manifest
-  (:require [photo-archive.filesystem :as fs]
-            [cljs.core.async :refer [go chan put! <! >!]]
-            [cljs.core.async.interop :refer-macros [<p!]]
-            [cljs.reader :as reader]
-            [goog.json :as json]))
+(ns photo-archive.manifest)
 
+;; JSON utilities
 (defn parse-json [json-str]
   "Parse JSON string to ClojureScript data structure"
   (try
@@ -17,73 +13,90 @@
   "Convert ClojureScript data structure to JSON string"
   (.stringify JSON (clj->js data) nil 2))
 
+(defn uuid []
+  "Generate a UUID-like string"
+  (let [s (.. js/Math (random) (toString 36) (substr 2 9))]
+    s))
+
+;; Manifest management
 (defn load-or-create-manifest [dir-handle images]
   "Load manifest.json if exists, otherwise create new one"
-  (go
-    (try
-      (let [manifest-file (<p! (fs/get-file-handle dir-handle "manifest.json"))]
-        (try
-          (let [manifest-text (<p! (fs/read-file manifest-file))]
-            (parse-json manifest-text))
-          (catch :default e
-            ;; File exists but couldn't read, create new
-            (create-manifest images dir-handle))))
-      (catch :default e
-        ;; File doesn't exist, create new
-        (create-manifest images dir-handle)))))
+  (js/Promise.
+    (fn [resolve reject]
+      (-> dir-handle
+          (.getFileHandle "manifest.json")
+          (.then (fn [manifest-file]
+                   (-> manifest-file
+                       (.getFile)
+                       (.then (fn [file]
+                                (-> file
+                                    (.text)
+                                    (.then (fn [text]
+                                             (resolve (parse-json text))))
+                                    (.catch (fn [] 
+                                              ;; File exists but can't read, create new
+                                              (resolve (create-manifest images)))))))
+                       (.catch reject))))
+          (.catch (fn [e]
+                    ;; File doesn't exist, create new
+                    (resolve (create-manifest images))))))))
 
-(defn create-manifest [images dir-handle]
+(defn create-manifest [images]
   "Create a new manifest from discovered images"
-  (go
-    (try
-      (let [photos (for [img images]
-                     {:id (random-uuid)
-                      :filename (.-name img)
-                      :title (.-name img)
-                      :file-size (.-size img)
-                      :file-type (.-type img)
-                      :last-modified (.-lastModified img)
-                      :metadata {:date ""
-                                 :camera ""
-                                 :iso ""
-                                 :aperture ""
-                                 :shutter-speed ""
-                                 :focal-length ""
-                                 :location ""
-                                 :description ""}})
-            manifest {:version "1.0"
-                      :created (js/Date.)
-                      :photos (vec photos)}
-            manifest-json (stringify-json manifest)]
-        ;; Save manifest
-        (<p! (fs/write-file dir-handle "manifest.json" manifest-json))
-        manifest)
-      (catch :default e
-        (js/console.error "Error creating manifest:" e)
-        nil))))
+  (let [photos (for [img images]
+                 {:id (uuid)
+                  :filename (.-name img)
+                  :title (.-name img)
+                  :file-size (.-size img)
+                  :file-type (.-type img)
+                  :last-modified (.-lastModified img)
+                  :metadata {:date ""
+                             :camera ""
+                             :iso ""
+                             :aperture ""
+                             :shutter-speed ""
+                             :focal-length ""
+                             :location ""
+                             :description ""}})
+        manifest {:version "1.0"
+                  :created (.toISOString (js/Date.))
+                  :photos (vec photos)}]
+    manifest))
 
 (defn save-manifest [dir-handle manifest]
   "Save manifest to file"
-  (go
-    (try
-      (let [manifest-json (stringify-json manifest)]
-        (<p! (fs/write-file dir-handle "manifest.json" manifest-json))
-        true)
-      (catch :default e
-        (js/console.error "Error saving manifest:" e)
-        false))))
+  (let [manifest-json (stringify-json manifest)]
+    (-> dir-handle
+        (.getFileHandle "manifest.json" #js{:create true})
+        (.then (fn [file-handle]
+                 (-> file-handle
+                     (.createWritable)
+                     (.then (fn [writable]
+                              (-> writable
+                                  (.write manifest-json)
+                                  (.then (fn []
+                                           (-> writable
+                                               (.close)
+                                               (.then (fn [] true)))))))))))))
 
 (defn load-photos-with-data-urls [manifest file-handles]
   "Load photo data URLs from file handles"
-  (go
-    (try
-      (let [photos-with-urls (for [photo (:photos manifest)
-                                    :let [handle (get file-handles (:filename photo))]]
-                               (if handle
-                                 (let [data-url (<p! (fs/read-file-as-data-url handle))]
-                                   (assoc photo :url data-url))
-                                 photo))]
-        (vec photos-with-urls))
-      (catch :default e
-        (js/console.error "Error loading photo URLs:" e)
-        (:photos manifest)))))
+  (js/Promise.all
+    (map (fn [photo]
+           (let [handle (get file-handles (:filename photo))]
+             (if handle
+               (-> handle
+                   (.getFile)
+                   (.then (fn [file]
+                            (let [reader (js/FileReader.)]
+                              (js/Promise.
+                                (fn [resolve reject]
+                                  (set! (.-onload reader)
+                                    (fn []
+                                      (resolve (assoc photo :url (.-result reader)))))
+                                  (set! (.-onerror reader)
+                                    (fn []
+                                      (reject (.-error reader))))
+                                  (.readAsDataURL reader file)))))))
+               (js/Promise.resolve photo))))
+         (:photos manifest)))))
