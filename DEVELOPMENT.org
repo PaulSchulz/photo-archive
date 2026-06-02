@@ -34,3 +34,4 @@ Get copilot to develop in a branch, and then pull the changes with:
   git checkout feature/gallery-and-viewer
 
 where feature/gallery-and-viewer is the feature branch that has been created.
+
