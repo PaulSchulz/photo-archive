@@ -1,209 +1,142 @@
+;;;; Namespace ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (ns photo-archive.core
   (:require
-   [reagent.core :as reagent :refer [atom]]
-   [reagent.dom :as rd]
-   [photo-archive.filesystem :as fs]
-   [photo-archive.manifest :as manifest]
-   [photo-archive.components.gallery :refer [gallery]]
-   [photo-archive.components.viewer :refer [photo-viewer]]))
+   [reagent.core :as r]
+   [reagent.dom :as rdom]
+   [promesa.core :as p]
+   [clojure.string :as str]))
 
-(enable-console-print!)
+;;;; App State ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defonce app-state
+  (r/atom
+   {:dir-handle nil
+    :loading false
+    :error nil
+    :photos []
+    :current nil
+    :current-url nil}))
 
-;; App state
-(defonce app-state (atom {:photos []
-                          :selected-photo-id nil
-                          :dir-handle nil
-                          :loading false
-                          :error nil}))
-
-;; (reset! app-state {:directory dir-handle})
-
-(defonce current-image (reagent/atom nil))
-
-(defn show-image! [file-handle]
-  (-> file-handle
-      (.getFile)
-      (.then
-       (fn [file]
-         (reset! current-image
-                 (js/URL.createObjectURL file))))))
-
-;; (defn image-view []
-;;   (when-let [url @image-url]
-;;     [:img
-;;      {:src url
-;;       :style {:max-width "100%"
-;;               :max-height "80vh"}}]))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; Pick Directory ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn choose-directory! []
   (-> (js/window.showDirectoryPicker)
       (.then
-       (fn [dir-handle]
-         (js/console.log "Selected:" (.-name dir-handle))))
+       (fn [dir]
+         (swap! app-state assoc :dir-handle dir)))
       (.catch
-       (fn [err]
-         (js/console.error err)))))
+       (fn [e]
+         (swap! app-state assoc :error e)))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Initialize directory and load photos
-(defn load-photos-from-directory []
-  ;; Change status to 'loading', and remove errors.
-  (swap! app-state assoc :loading true :error nil)
+;;;; Image Helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(def image-exts #{"jpg" "jpeg" "png" "gif" "webp"})
 
-  (-> (fs/request-directory-handle)
-      (.then
-       (fn [dir-handle]
-         (swap! app-state assoc :dir-handle dir-handle)
+(defn image-file? [name]
+  (let [ext (some-> name (str/split #"\.") last str/lower-case)]
+    (contains? image-exts ext)))
 
-         ;; Scan for images
-         (-> (fs/scan-images dir-handle)
-             (.then
-              (fn [images]
-                (if (empty? images)
-                  (swap! app-state assoc :error "No images found in selected directory" :loading false)
-                  (do
-                    ;; Create map of filename -> file handle
-                    (let [file-handles (into {} (map (fn [img] [(.-name img) (.-handle img)]) images))]
+;;;; Scan Directories ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn scan-directory! []
+  (let [dir (:dir-handle @app-state)]
+    (when dir
+      (swap! app-state assoc :loading true :photos [])
 
-                      ;; Load or create manifest
-                      (-> (manifest/load-or-create-manifest dir-handle images)
-                          (.then
-                           (fn [manifest-data]
-                             ;; Load photo data URLs
-                             (-> (manifest/load-photos-with-data-urls manifest-data file-handles)
-                                 (.then
-                                  (fn [photos-with-urls]
-                                    ;; Save manifest
-                                    (-> (manifest/save-manifest dir-handle manifest-data)
-                                        (.then
-                                         (fn []
-                                           (swap! app-state assoc :photos (vec photos-with-urls)
-                                                  :loading false))))))))))))))))
-         (.catch (fn [e]
-                   (js/console.error "Error scanning images:" e)
-                   (swap! app-state assoc :error "Error scanning folder" :loading false))))))
-  (.catch (fn [e]
-            (js/console.error "Error accessing folder:" e)
-            (swap! app-state assoc :error "Permission denied or operation cancelled" :loading false))))
+      (p/let [entries (js/Array.from (.entries dir))]
 
-(defn get-photo-by-id [photos id]
-(first (filter #(= (:id %) id) photos)))
+        (let [photos
+              (->> entries
+                   (map (fn [[name handle]]
+                          (when (and (= "file" (.-kind handle))
+                                     (image-file? name))
+                            {:name name
+                             :handle handle})))
+                   (remove nil?)
+                   vec)]
 
-(defn get-photo-index [photos id]
-  (.indexOf (map :id photos) id))
+          (swap! app-state assoc
+                 :photos photos
+                 :loading false))))))
 
-(defn select-photo [id]
-  (swap! app-state assoc :selected-photo-id id))
+;;;; Load Image URL ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn show-image! [photo]
+  (let [old-url (:current-url @app-state)]
+    (when old-url
+      (js/URL.revokeObjectURL old-url)))
 
-(defn close-viewer []
-  (swap! app-state assoc :selected-photo-id nil))
+  (p/let [file (.getFile (:handle photo))
+          url  (js/URL.createObjectURL file)]
 
-(defn next-photo []
-  (let [current-id (:selected-photo-id @app-state)
-        photos (:photos @app-state)
-        current-index (get-photo-index photos current-id)
-        next-index (if (< current-index (- (count photos) 1))
-                     (+ current-index 1)
-                     0)
-        next-photo (nth photos next-index)]
-    (select-photo (:id next-photo))))
+    (swap! app-state assoc
+           :current photo
+           :current-url url)))
 
-(defn prev-photo []
-  (let [current-id (:selected-photo-id @app-state)
-        photos (:photos @app-state)
-        current-index (get-photo-index photos current-id)
-        prev-index (if (> current-index 0)
-                     (- current-index 1)
-                     (- (count photos) 1))
-        prev-photo (nth photos prev-index)]
-    (select-photo (:id prev-photo))))
-
-(defn folder-selector []
-  [:div.folder-selector
-   [:div.folder-selector-content
-    [:h2 "Photos"]
-    [:p "Select a folder containing your photos"]
-    [:button.btn-primary {:on-click load-photos-from-directory}
-     "📁 Select Photo Folder"]
-    (when-let [error (:error @app-state)]
-      [:div.error-message error])
-    (when (:loading @app-state)
-      [:div.loading "Loading photos ..."])
-    ]])
-
-(defn photo-page []
-  ;; [gallery photos select-photo]
-  ;;  [:p "Photos"]
-  [:img {:src "data/test-images/duckling-on-a-trip.jpg"}]
-  )
-
-(defn directory-info []
+;;;; UI Components ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;; Controlls
+(defn controls []
   [:div
-   "Current archive: "
-   (or (:directory-name @app-state)
-       "None selected")])
+   [:button {:on-click choose-directory!}
+    "Open Directory"]
 
+   [:button {:on-click scan-directory!}
+    "Scan Images"]])
+
+;;;; Photo List
+(defn photo-list []
+  (let [photos (:photos @app-state)]
+    [:ul
+     (for [p photos]
+       ^{:key (:name p)}
+       [:li
+        [:a {:href "#"
+             :on-click #(show-image! p)}
+         (:name p)]])]))
+
+;;;; Image Viewer
+(defn image-view []
+  (let [url (:current-url @app-state)]
+    (when url
+      [:img
+       {:src url
+        :style {:max-width "100%"
+                :max-height "70vh"
+                :display "block"
+                :margin-top "1em"}}])))
+
+;;;; Status
+(defn status []
+  (let [{:keys [loading error dir-handle]} @app-state]
+    [:div
+     [:div "Directory: "
+      (or (some-> dir-handle .-name) "None")]
+
+     (when loading
+       [:div "Loading..."])
+
+     (when error
+       [:div {:style {:color "red"}}
+        (str error)])]))
+
+;;;; Main Page ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn app []
-  (let [dir-handle (:dir-handle @app-state)
-        photos (:photos @app-state)
-        selected-id (:selected-photo-id @app-state)
-        selected-photo (when selected-id
-                         (get-photo-by-id photos selected-id))]
+  [:div
+   {:style {:font-family "sans-serif"
+            :padding "1em"}}
 
-    ;; (-> file-handle
-    ;;     (.getFile)
-    ;;     (.then
-    ;;      (fn [file]
-    ;;        (let [url (js/URL.createObjectURL file)]
-    ;;          (reset! selected-image url)))))
+   [:h1 "Photo Archive"]
 
+   [controls]
+   [status]
 
-    ;;    (if (empty? photos)
-    ;; Select data directory
-    ;; [folder-selector]
-    [:div.app
-     [:header.app-header
-      [:h1 "Photos"]
-      [:button.btn-small {:on-click load-photos-from-directory}
-       "📁 Change Folder"]]
+   [:h2 "Photos"]
+   [photo-list]
 
-     ;; [gallery photos select-photo]
-     ;; (photo-page)
-     (directory-info)
+   [:h2 "Viewer"]
+   [image-view]])
 
-     [:p "Photo"]
-     [:hr]
-     [:h4 "Debug"]
-     (if (nil? dir-handle)
-       [:p "dir-handle " "nil"]
-       [:div
-        [:p "dir-handle: " (.-name dir-handle) "/"]
-        ]
-       )
-     (if (empty? photos)
-       [:p "photos " "-none-"]
-       [:p "photos " photos]
-       )
-     (if (empty? selected-id)
-       [:p "selected-id " "-none-"]
-       [:p "selected0-id " selected-id]
-       )
+;;;; Mount ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn mount! []
+  (println "Mounting app...")
+  (rdom/render
+   [app]
+   (.getElementById js/document "app")))
 
-     ;; [:p (string (.-name (:dir-handle app-state)))]
-
-     ;; [:img {:src "file:data/test-images/duckling-on-a-trip.jpg"}]
-     ;; [:img {:src @selected-image}]
-     ;;(image-view)
-
-     ;;     (when selected-photo
-     ;;     [photo-viewer selected-photo close-viewer prev-photo next-photo])])
-     ]
-    ))
-
-(rd/render [app]
-(. js/document (getElementById "app")))
-
-(defn on-js-reload []
-;; Reload hook for development
-)
+(defn ^:export init []
+  (mount!))
